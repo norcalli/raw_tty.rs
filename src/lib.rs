@@ -114,24 +114,22 @@ impl TtyModeGuard {
         Ok(TtyModeGuard { ios, fd })
     }
 
-    pub fn with_raw_mode(self) -> io::Result<TtyModeGuard> {
+    pub fn set_raw_mode(&mut self) -> io::Result<()> {
         let mut ios = self.ios;
 
         raw_terminal_attr(&mut ios);
 
         set_terminal_attr(self.fd, &ios)?;
-        Ok(self)
+        Ok(())
     }
-}
 
-pub trait SaveTtyMode: AsRawFd + Sized {
-    // fn save_tty_mode(&mut self) -> io::Result<TtyModeGuard>;
-    fn save_tty_mode(&self) -> io::Result<TtyModeGuard>;
-}
-
-impl<T: AsRawFd> SaveTtyMode for T {
-    fn save_tty_mode(&self) -> io::Result<TtyModeGuard> {
-        TtyModeGuard::new(self.as_raw_fd())
+    pub fn modify_mode<F>(&mut self, f: F) -> io::Result<()>
+    where
+        F: FnOnce(Termios) -> Termios,
+    {
+        let ios = f(self.ios);
+        set_terminal_attr(self.fd, &ios)?;
+        Ok(())
     }
 }
 
@@ -164,15 +162,15 @@ impl<T: AsRawFd> SaveTtyMode for T {
 //}
 
 use std::io::Read;
-use std::ops;
 use std::mem::ManuallyDrop;
+use std::ops;
 
-pub struct RawReader<T: Read + AsRawFd> {
+pub struct TtyWithGuard<T: AsRawFd> {
     inner: ManuallyDrop<T>,
-    _guard: ManuallyDrop<TtyModeGuard>,
+    guard: ManuallyDrop<TtyModeGuard>,
 }
 
-impl<R: Read + AsRawFd> ops::Deref for RawReader<R> {
+impl<R: AsRawFd> ops::Deref for TtyWithGuard<R> {
     type Target = R;
 
     fn deref(&self) -> &R {
@@ -180,28 +178,58 @@ impl<R: Read + AsRawFd> ops::Deref for RawReader<R> {
     }
 }
 
-impl<R: Read + AsRawFd> ops::DerefMut for RawReader<R> {
+impl<R: AsRawFd> ops::DerefMut for TtyWithGuard<R> {
     fn deref_mut(&mut self) -> &mut R {
         &mut self.inner
     }
 }
 
-impl<R: Read + AsRawFd> Read for RawReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.inner.read(buf)
-    }
-}
-
-
-impl<R: Read + AsRawFd> Drop for RawReader<R> {
+impl<R: AsRawFd> Drop for TtyWithGuard<R> {
     fn drop(&mut self) {
         unsafe {
-            ManuallyDrop::drop(&mut self._guard);
+            ManuallyDrop::drop(&mut self.guard);
             ManuallyDrop::drop(&mut self.inner);
         }
     }
 }
 
+impl<T: AsRawFd> TtyWithGuard<T> {
+    pub fn new(tty: T) -> io::Result<TtyWithGuard<T>> {
+        Ok(TtyWithGuard {
+            guard: ManuallyDrop::new(TtyModeGuard::new(tty.as_raw_fd())?),
+            inner: ManuallyDrop::new(tty),
+        })
+    }
+
+    fn modify_mode<F>(&mut self, f: F) -> io::Result<()>
+    where
+        F: FnOnce(Termios) -> Termios,
+    {
+        self.guard.modify_mode(f)
+    }
+
+    pub fn set_raw_mode(&mut self) -> io::Result<()> {
+        self.guard.set_raw_mode()
+    }
+}
+
+pub trait GuardMode: AsRawFd + Sized {
+    fn guard_mode(self) -> io::Result<TtyWithGuard<Self>>;
+}
+
+impl<T: AsRawFd> GuardMode for T {
+    fn guard_mode(self) -> io::Result<TtyWithGuard<T>> {
+        TtyWithGuard::new(self)
+    }
+}
+
+pub struct RawReader<T: Read + AsRawFd>(TtyWithGuard<T>);
+
+impl<R: Read + AsRawFd> Read for RawReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
 
 /// Types which can be converted into "raw mode".
 ///
@@ -211,18 +239,16 @@ pub trait IntoRawMode: Read + AsRawFd + Sized {
     /// Raw mode means that stdin won't be printed (it will instead have to be written manually by
     /// the program). Furthermore, the input isn't canonicalised or buffered (that is, you can
     /// read from stdin one byte of a time). The output is neither modified in any way.
-    fn into_raw_mode(self) -> io::Result<RawReader<Self>>;
+    fn into_raw_mode(self) -> io::Result<TtyWithGuard<Self>>;
 }
 
 impl<T: Read + AsRawFd> IntoRawMode for T {
-    fn into_raw_mode(self) -> io::Result<RawReader<T>> {
-        Ok(RawReader {
-            _guard: ManuallyDrop::new(self.save_tty_mode()?.with_raw_mode()?),
-            inner: ManuallyDrop::new(self),
-        })
+    fn into_raw_mode(self) -> io::Result<TtyWithGuard<T>> {
+        let mut x = TtyWithGuard::new(self)?;
+        x.set_raw_mode()?;
+        Ok(x)
     }
 }
-
 
 // impl<W: Write + AsRawFd> RawReader<W> {
 //     pub fn suspend_raw_mode(&self) -> io::Result<()> {
@@ -246,7 +272,8 @@ mod test {
 
     #[test]
     fn test_into_raw_mode() -> io::Result<()> {
-        let _guard = stdin().save_tty_mode()?.with_raw_mode();
+        let mut stdin = stdin().guard_mode()?;
+        stdin.set_raw_mode()?;
         let mut out = stdout();
 
         out.write_all(b"this is a test, muahhahahah\r\n")?;
