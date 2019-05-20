@@ -239,14 +239,14 @@ pub trait IntoRawMode: Read + AsRawFd + Sized {
     /// Raw mode means that stdin won't be printed (it will instead have to be written manually by
     /// the program). Furthermore, the input isn't canonicalised or buffered (that is, you can
     /// read from stdin one byte of a time). The output is neither modified in any way.
-    fn into_raw_mode(self) -> io::Result<TtyWithGuard<Self>>;
+    fn into_raw_mode(self) -> io::Result<RawReader<Self>>;
 }
 
 impl<T: Read + AsRawFd> IntoRawMode for T {
-    fn into_raw_mode(self) -> io::Result<TtyWithGuard<T>> {
+    fn into_raw_mode(self) -> io::Result<RawReader<T>> {
         let mut x = TtyWithGuard::new(self)?;
         x.set_raw_mode()?;
-        Ok(x)
+        Ok(RawReader(x))
     }
 }
 
