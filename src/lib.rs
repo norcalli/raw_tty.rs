@@ -1,26 +1,81 @@
-// //! Managing raw mode.
-// //!
-// //! Raw mode is a particular state a TTY can have. It signifies that:
-// //!
-// //! 1. No line buffering (the input is given byte-by-byte).
-// //! 2. The input is not written out, instead it has to be done manually by the programmer.
-// //! 3. The output is not canonicalized (for example, `\n` means "go one line down", not "line
-// //!    break").
-// //!
-// //! It is essential to design terminal programs.
-// //!
-// //! # Example
-// //!
-// //! ```rust,no_run
-// //! use termion::raw::IntoRawMode;
-// //! use std::io::{Write, stdout};
-// //!
-// //! fn main() {
-// //!     let mut stdout = stdout().into_raw_mode().unwrap();
-// //!
-// //!     write!(stdout, "Hey there.").unwrap();
-// //! }
-// //! ```
+//! This crate can be used for generally interacting with a tty's mode safely, but was
+//! created originally to solve the problem of using raw mode with /dev/tty while reading
+//! stdin for data.
+//!
+//! # Raw Mode
+//!
+//! Description from the `termion` crate:
+//! >Managing raw mode.
+//!
+//! >Raw mode is a particular state a TTY can have. It signifies that:
+//!
+//! >1. No line buffering (the input is given byte-by-byte).
+//! >2. The input is not written out, instead it has to be done manually by the programmer.
+//! >3. The output is not canonicalized (for example, `\n` means "go one line down", not "line
+//! >   break").
+//!
+//! >It is essential to design terminal programs.
+//!
+//! ## Example
+//!
+//! ```no_run
+//! use raw_tty::IntoRawMode;
+//! use std::io::{Write, stdin, stdout};
+//!
+//! fn main() {
+//!     let stdin = stdin().into_raw_mode().unwrap();
+//!     let mut stdout = stdout();
+//!
+//!     write!(stdout, "Hey there.").unwrap();
+//! }
+//! ```
+//!
+//! ## Example with /dev/tty
+//!
+//! ```
+//! use raw_tty::IntoRawMode;
+//! use std::io::{self, Read, Write, stdin, stdout};
+//! use std::fs;
+//!
+//! fn main() -> io::Result<()> {
+//!     let mut tty = fs::OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+//!     // Can use the tty_input for keys while also reading stdin for data.
+//!     let mut tty_input = tty.try_clone()?.into_raw_mode();
+//!     let mut buffer = String::new();
+//!     stdin().read_to_string(&mut buffer)?;
+//!
+//!     write!(tty, "Hey there.")
+//! }
+//! ```
+//!
+//! # General example
+//!
+//! ```no_run
+//! use raw_tty::GuardMode;
+//! use std::io::{self, Write, stdin, stdout};
+//!
+//! fn test_into_raw_mode() -> io::Result<()> {
+//!     let mut stdin = stdin().guard_mode()?;
+//!     stdin.set_raw_mode()?;
+//!     let mut out = stdout();
+//!
+//!     out.write_all(b"this is a test, muahhahahah\r\n")?;
+//!
+//!     drop(out);
+//!     Ok(())
+//! }
+//!
+//! fn main() -> io::Result<()> {
+//!     let mut stdout = stdout().guard_mode()?;
+//!     stdout.modify_mode(|ios| /* do stuff with termios here */ ios)?;
+//!
+//!     // Have to use &* since TtyModeGuard only implements
+//!     // deref, unlike RawReader which implements read specifically.
+//!     // Otherwise, it wouldn't be recognized as `Write`able.
+//!     write!(&mut *stdout, "Hey there.")
+//! }
+//!
+//! ```
 
 mod util {
     use std::io;
@@ -54,7 +109,10 @@ mod attr {
         use crate::util::*;
 
         use libc::c_int;
-        pub use libc::termios as Termios;
+
+        /// Export of libc::termios
+        pub type Termios = libc::termios;
+
         use std::os::unix::io::RawFd;
         use std::{io, mem};
 
@@ -88,7 +146,10 @@ mod attr {
     pub use unix::*;
 }
 
-use attr::{get_terminal_attr, raw_terminal_attr, set_terminal_attr, Termios};
+/// Export of libc::termios
+pub use attr::Termios;
+
+use attr::{get_terminal_attr, raw_terminal_attr, set_terminal_attr};
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 
@@ -114,6 +175,7 @@ impl TtyModeGuard {
         Ok(TtyModeGuard { ios, fd })
     }
 
+    /// Switch to raw mode.
     pub fn set_raw_mode(&mut self) -> io::Result<()> {
         let mut ios = self.ios;
 
@@ -123,6 +185,11 @@ impl TtyModeGuard {
         Ok(())
     }
 
+    /// Creates a copy of the saved termios and passes it to `f`
+    /// which should return the new termios to apply.
+    ///
+    /// This method can be used to restore the saved ios afterwards
+    /// by using the identity function.
     pub fn modify_mode<F>(&mut self, f: F) -> io::Result<()>
     where
         F: FnOnce(Termios) -> Termios,
@@ -133,38 +200,12 @@ impl TtyModeGuard {
     }
 }
 
-///// Types which can be converted into "raw mode".
-/////
-//pub trait RawMode: AsRawFd + Sized {
-//    /// Switch to raw mode.
-//    ///
-//    /// Raw mode means that stdin won't be printed (it will instead have to be written manually by
-//    /// the program). Furthermore, the input isn't canonicalised or buffered (that is, you can
-//    /// read from stdin one byte of a time). The output is neither modified in any way.
-//    fn raw_mode(&self) -> io::Result<TtyModeGuard>;
-//}
-
-//impl<T: AsRawFd> RawMode for T {
-//    fn raw_mode(&self) -> io::Result<TtyModeGuard> {
-//        Ok(self.save_tty_mode()?.with_raw_mode()?);
-//        // let guard = self.save_tty_mode()?;
-//        // let mut ios = guard.ios;
-
-//        // raw_terminal_attr(&mut ios);
-
-//        // set_terminal_attr(guard.fd, &ios)?;
-
-//        // Ok(RawTerminal {
-//        //     prev_ios: prev_ios,
-//        //     output: self,
-//        // })
-//    }
-//}
-
 use std::io::Read;
 use std::mem::ManuallyDrop;
 use std::ops;
 
+/// Wraps a file descriptor for a TTY with a guard which saves
+/// the terminal mode on creation and restores it on drop.
 pub struct TtyWithGuard<T: AsRawFd> {
     inner: ManuallyDrop<T>,
     guard: ManuallyDrop<TtyModeGuard>,
@@ -201,18 +242,25 @@ impl<T: AsRawFd> TtyWithGuard<T> {
         })
     }
 
-    fn modify_mode<F>(&mut self, f: F) -> io::Result<()>
+    /// Creates a copy of the saved termios and passes it to `f`
+    /// which should return the new termios to apply.
+    ///
+    /// This method can be used to restore the saved ios afterwards
+    /// by using the identity function.
+    pub fn modify_mode<F>(&mut self, f: F) -> io::Result<()>
     where
         F: FnOnce(Termios) -> Termios,
     {
         self.guard.modify_mode(f)
     }
 
+    /// Switch to raw mode.
     pub fn set_raw_mode(&mut self) -> io::Result<()> {
         self.guard.set_raw_mode()
     }
 }
 
+/// Types which can save a termios.
 pub trait GuardMode: AsRawFd + Sized {
     fn guard_mode(self) -> io::Result<TtyWithGuard<Self>>;
 }
@@ -249,20 +297,6 @@ impl<T: Read + AsRawFd> IntoRawMode for T {
         Ok(RawReader(x))
     }
 }
-
-// impl<W: Write + AsRawFd> RawReader<W> {
-//     pub fn suspend_raw_mode(&self) -> io::Result<()> {
-//         set_terminal_attr(self.as_raw_fd(), &self.prev_ios)?;
-//         Ok(())
-//     }
-
-//     pub fn activate_raw_mode(&self) -> io::Result<()> {
-//         let mut ios = get_terminal_attr(self.as_raw_fd())?;
-//         raw_terminal_attr(&mut ios);
-//         set_terminal_attr(self.as_raw_fd(), &ios)?;
-//         Ok(())
-//     }
-// }
 
 #[cfg(test)]
 mod test {
