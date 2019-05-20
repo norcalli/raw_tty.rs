@@ -23,7 +23,7 @@ Description from the `termion` crate:
 
 ### Example
 
-```no_run
+```rust
 use raw_tty::IntoRawMode;
 use std::io::{Write, stdin, stdout};
                                                                                            
@@ -37,7 +37,7 @@ fn main() {
 
 ### Example with /dev/tty
 
-```
+```rust
 use raw_tty::IntoRawMode;
 use std::io::{self, Read, Write, stdin, stdout};
 use std::fs;
@@ -55,7 +55,7 @@ fn main() -> io::Result<()> {
 
 ## General example
 
-```no_run
+```rust
 use raw_tty::GuardMode;
 use std::io::{self, Write, stdin, stdout};
                                                                                            
