@@ -1,23 +1,28 @@
+# `raw_tty`
+
 This crate can be used for generally interacting with a tty's mode safely, but was
 created originally to solve the problem of using raw mode with /dev/tty while reading
 stdin for data.
-                                                                                           
-# Raw Mode
-                                                                                           
+
+# Usage
+
+
+## Raw Mode
+
 Description from the `termion` crate:
 >Managing raw mode.
-                                                                                           
+
 >Raw mode is a particular state a TTY can have. It signifies that:
-                                                                                           
+
 >1. No line buffering (the input is given byte-by-byte).
 >2. The input is not written out, instead it has to be done manually by the programmer.
 >3. The output is not canonicalized (for example, `\n` means "go one line down", not "line
 >   break").
-                                                                                           
+
 >It is essential to design terminal programs.
-                                                                                           
-## Example
-                                                                                           
+
+### Example
+
 ```no_run
 use raw_tty::IntoRawMode;
 use std::io::{Write, stdin, stdout};
@@ -29,9 +34,9 @@ fn main() {
     write!(stdout, "Hey there.").unwrap();
 }
 ```
-                                                                                           
-## Example with /dev/tty
-                                                                                           
+
+### Example with /dev/tty
+
 ```
 use raw_tty::IntoRawMode;
 use std::io::{self, Read, Write, stdin, stdout};
@@ -47,9 +52,9 @@ fn main() -> io::Result<()> {
     write!(tty, "Hey there.")
 }
 ```
-                                                                                           
-# General example
-                                                                                           
+
+## General example
+
 ```no_run
 use raw_tty::GuardMode;
 use std::io::{self, Write, stdin, stdout};
