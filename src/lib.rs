@@ -165,10 +165,11 @@ impl<T: AsRawFd> SaveTtyMode for T {
 
 use std::io::Read;
 use std::ops;
+use std::mem::ManuallyDrop;
 
 pub struct RawReader<T: Read + AsRawFd> {
-    inner: T,
-    _guard: TtyModeGuard,
+    inner: ManuallyDrop<T>,
+    _guard: ManuallyDrop<TtyModeGuard>,
 }
 
 impl<R: Read + AsRawFd> ops::Deref for RawReader<R> {
@@ -185,11 +186,21 @@ impl<R: Read + AsRawFd> ops::DerefMut for RawReader<R> {
     }
 }
 
-// impl<R: Read + AsRawFd> Read for RawReader<R> {
-//     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-//         self.inner.read(buf)
-//     }
-// }
+impl<R: Read + AsRawFd> Read for RawReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+
+impl<R: Read + AsRawFd> Drop for RawReader<R> {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self._guard);
+            ManuallyDrop::drop(&mut self.inner);
+        }
+    }
+}
 
 
 /// Types which can be converted into "raw mode".
@@ -206,8 +217,8 @@ pub trait IntoRawMode: Read + AsRawFd + Sized {
 impl<T: Read + AsRawFd> IntoRawMode for T {
     fn into_raw_mode(self) -> io::Result<RawReader<T>> {
         Ok(RawReader {
-            _guard: self.save_tty_mode()?.with_raw_mode()?,
-            inner: self,
+            _guard: ManuallyDrop::new(self.save_tty_mode()?.with_raw_mode()?),
+            inner: ManuallyDrop::new(self),
         })
     }
 }
