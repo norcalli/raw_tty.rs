@@ -150,6 +150,7 @@ mod attr {
 pub use attr::Termios;
 
 use attr::{get_terminal_attr, raw_terminal_attr, set_terminal_attr};
+use derive_more::{Deref, DerefMut};
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 
@@ -172,7 +173,7 @@ impl TtyModeGuard {
     pub fn new(fd: RawFd) -> io::Result<TtyModeGuard> {
         let ios = get_terminal_attr(fd)?;
 
-        Ok(TtyModeGuard { ios, fd })
+        Ok(Self { ios, fd })
     }
 
     /// Switch to raw mode.
@@ -201,44 +202,36 @@ impl TtyModeGuard {
 }
 
 use std::io::Read;
-use std::mem::ManuallyDrop;
 use std::ops;
 
 /// Wraps a file descriptor for a TTY with a guard which saves
 /// the terminal mode on creation and restores it on drop.
 pub struct TtyWithGuard<T: AsRawFd> {
-    inner: ManuallyDrop<T>,
-    guard: ManuallyDrop<TtyModeGuard>,
+    guard: TtyModeGuard,
+    inner: T,
 }
 
 impl<R: AsRawFd> ops::Deref for TtyWithGuard<R> {
     type Target = R;
 
+    #[inline]
     fn deref(&self) -> &R {
         &self.inner
     }
 }
 
 impl<R: AsRawFd> ops::DerefMut for TtyWithGuard<R> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut R {
         &mut self.inner
     }
 }
 
-impl<R: AsRawFd> Drop for TtyWithGuard<R> {
-    fn drop(&mut self) {
-        unsafe {
-            ManuallyDrop::drop(&mut self.guard);
-            ManuallyDrop::drop(&mut self.inner);
-        }
-    }
-}
-
 impl<T: AsRawFd> TtyWithGuard<T> {
     pub fn new(tty: T) -> io::Result<TtyWithGuard<T>> {
-        Ok(TtyWithGuard {
-            guard: ManuallyDrop::new(TtyModeGuard::new(tty.as_raw_fd())?),
-            inner: ManuallyDrop::new(tty),
+        Ok(Self {
+            guard: TtyModeGuard::new(tty.as_raw_fd())?,
+            inner: tty,
         })
     }
 
@@ -271,6 +264,23 @@ impl<T: AsRawFd> GuardMode for T {
     }
 }
 
+impl<R: io::Read + AsRawFd> io::Read for TtyWithGuard<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<R: io::Write + AsRawFd> io::Write for TtyWithGuard<R> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+#[derive(Deref, DerefMut)]
 pub struct RawReader<T: Read + AsRawFd>(TtyWithGuard<T>);
 
 impl<R: Read + AsRawFd> Read for RawReader<R> {
@@ -310,7 +320,7 @@ mod test {
         stdin.set_raw_mode()?;
         let mut out = stdout();
 
-        out.write_all(b"this is a test, muahhahahah\r\n")?;
+        out.write_all(b"testing, 123\r\n")?;
 
         drop(out);
         Ok(())
