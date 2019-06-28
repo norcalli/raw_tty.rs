@@ -3,6 +3,11 @@ name = "raw_tty"
 version = "0.1.0"
 authors = ["Ashkan Kiani <ashkan.k.kiani@gmail.com>"]
 edition = "2018"
+description = "This crate can be used for generally interacting with a tty's mode safely, but was created originally to solve the problem of using raw mode with /dev/tty while reading stdin for data."
+repository = "https://github.com/norcalli/raw_tty.rs"
+homepage = "https://github.com/norcalli/raw_tty.rs"
+documentation = "https://docs.rs/raw_tty"
+license = "Apache-2.0 OR MIT"
 
 [dependencies]
 libc = "0.2.55"
