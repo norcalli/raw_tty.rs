@@ -123,7 +123,7 @@ mod attr {
         }
 
         pub fn set_terminal_attr(fd: RawFd, termios: &Termios) -> io::Result<()> {
-            convert_to_result(unsafe { libc::tcsetattr(fd, 0, termios) }).and(Ok(()))
+            convert_to_result(unsafe { libc::tcsetattr(fd, libc::TCSANOW, termios) }).and(Ok(()))
         }
 
         pub fn raw_terminal_attr(termios: &mut Termios) {
