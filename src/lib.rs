@@ -165,7 +165,7 @@ pub struct TtyModeGuard {
 
 impl Drop for TtyModeGuard {
     fn drop(&mut self) {
-        set_terminal_attr(self.fd, &self.ios).unwrap();
+        set_terminal_attr(self.fd, &self.ios).ok();
     }
 }
 
